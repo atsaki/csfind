@@ -1,0 +1,183 @@
+#!/bin/bash
+# encoding: utf-8
+
+SUBCOMMANDS=$(cat << EOS
+diskoffering
+firewallrule
+loadbalancerrule
+network
+networkoffering
+ostype
+portforwardingrule
+publicipaddress
+serviceoffering
+sshkeypair
+template
+virtualmachine
+volume
+zone
+EOS)
+
+search_mode="extended"
+
+usage() {
+  cat <<EOS
+Usage: ${PROGNAME} [OPTIONS] [RESOURCE] [QUERY]
+
+csfind is a tool for CloudStack resource ID
+
+Options:
+  -h, --help
+  -e, --extended-exact  Extended-search mode (exact match)
+  -x, --extended        Extended-search mode
+
+Supported resources:
+$( IFS=$'\n'; for cmd in ${SUBCOMMANDS}; do echo "  ${cmd}"; done )
+EOS
+}
+
+get_search_option() {
+  [ "${search_mode}" == "exact" ] && echo "--extended-exact" || echo "--extended"
+}
+
+select_item() {
+  local prompt="${1}(${search_mode})"; shift
+  local fields="${1}"; shift
+  local items="${1}"; shift
+  local query=$@
+
+  local ids=$( echo "${items}" | jq -r .id )
+  local menu=$( echo "${items}" |
+                jq -r  "[${fields}] | map(tostring) | join(\"|\")" |
+                sed 's/||/|null|/g' | column -t -s'|' | nl )
+
+  local selected=$( echo "${menu}" |
+                    fzf-tmux --cycle --ansi --multi --exit-0 --select-1 \
+                             --reverse \
+                             $( get_search_option ) \
+                             --prompt "${prompt}: " --query "${query}" |
+                    cut -f 1 | sed -e 's/^ *//' -e 's/ *$//' )
+
+  IFS=$'\n'
+  for n in ${selected}; do
+    echo "${ids}" | sed -n "${n}"p
+  done
+}
+
+select_subcommand() {
+  local subcommand=$( echo "${SUBCOMMANDS}" |
+                      fzf-tmux --cycle $( get_search_option ) \
+                               --prompt "subcommand(${search_mode}): " )
+  [ -n "${subcommand}" ] && ${0} $( get_search_option ) ${subcommand}
+}
+
+for opt in "$@"
+do
+  case "${opt}" in
+    '-h'|'--help' )
+      usage
+      exit 1
+      ;;
+    '-e'|'--extended-exact' )
+      search_mode="exact"
+      shift 1
+      ;;
+    '-x'|'--extended' )
+      search_mode="extended"
+      shift 1
+      ;;
+  esac
+done
+
+if [ $# -lt 1 ]
+then
+  select_subcommand
+else
+  subcommand="${1}"; shift
+  case "${subcommand}" in
+    diskoffering|do)
+      items=$( cs listDiskOfferings |
+               jq -r ".diskoffering[] | \
+                      .disksize=if .iscustomized then \"custom\" else (.disksize|tostring)+\"GB\" end" )
+      select_item "disk offering" ".name, .displaytext, .disksize" "${items}" $@
+    ;;
+  
+    firewallrule|firewall|fw)
+      items=$( cs listFirewallRules | jq -r ".firewallrule[] | .range=.startport+\"-\"+.endport" )
+      select_item "firewall rule" ".ipaddress, .cidrlist, .protocol, .range" "${items}" $@
+    ;;
+  
+    loadbalancerrule|loadbalancer|lb)
+      items=$( cs listLoadBalancerRules | jq -r ".loadbalancerrule[]" )
+      select_item "loadbalancer rule" \
+                  ".name, .state, .publicip, .publicport+\"->\"+.privateport, \
+                   .algorithm" "${items}" $@
+    ;;
+  
+    network|nw)
+      items=$( cs listNetworks | jq -r '.network[]' )
+      select_item "network" ".name, .zonename, .cidr" "${items}" $@
+    ;;
+  
+    networkoffering|no)
+      items=$( cs listNetworkOfferings | jq -r '.networkoffering[]' )
+      select_item "network offering" ".name, .state, .traffictype" "${items}" $@
+    ;;
+  
+    ostype|os)
+      items=$( cs listOsTypes | jq -r ".ostype[]" )
+      select_item "OS type" ".description" "${items}" $@
+    ;;
+  
+    portforwardingrule|portforwarding|pf)
+      items=$( cs listPortForwardingRules |
+               jq -r ".portforwardingrule[] |
+                      .in=.ipaddress+\":\"+.publicport | 
+                      .out=.virtualmachinename+\":\"+.privateport" )
+      select_item "portforwarding rule" ".protocol, .in, \"->\", .out" "${items}" $@
+    ;;
+  
+    publicipaddress|ipaddress|ip)
+      items=$( cs listPublicIpAddresses |
+               jq -r ".publicipaddress[] | \
+                      .issourcenat=if .issourcenat then \"source\" else \"\" end" )
+      select_item "public ipaddress" ".ipaddress, .zonename, .associatednetworkname, .issourcenat" "${items}" $@
+    ;;
+  
+    serviceoffering|so)
+      items=$( cs listServiceOfferings | jq -r '.serviceoffering[]' )
+      select_item "service offering" ".name, .displaytext" "${items}" $@
+    ;;
+  
+    sshkeypair|ssh|keypair)
+      items=$( cs listSSHKeyPairs | jq -r ".sshkeypair[] | .id=.name" )
+      select_item "SSH keypair" ".name, .fingerprint" "${items}" $@
+    ;;
+  
+    template|tmpl)
+      items=$( cs listTemplates templatefilter=all | jq -r '.template[]' )
+      select_item "template" ".name, .zonename, .account, .displaytext" "${items}" $@
+    ;;
+  
+    virtualmachine|vm)
+      items=$( cs listVirtualMachines | jq -r '.virtualmachine[]' )
+      select_item "virtualmachine" \
+                  ".name, .displayname, .state, .zonename, \
+                   .serviceofferingname, .templatename" "${items}" $@
+    ;;
+  
+    volume|vol)
+      items=$( cs listVolumes | jq -r '.volume[] | .size=(.size/1024/1024/1024|tostring)+"GB"')
+      select_item "volume" ".name, .size, .zonename, .vmname, .vmstate" "${items}" $@
+    ;;
+  
+    zone)
+      items=$( cs listZones | jq -r '.zone[]' )
+      select_item "zone" ".name, .allocationstate, .networktype" "${items}" $@
+    ;;
+  
+    *)
+      usage
+    ;;
+  esac
+fi
