@@ -11,6 +11,7 @@ ostype
 portforwardingrule
 publicipaddress
 serviceoffering
+snapshot
 sshkeypair
 template
 virtualmachine
@@ -145,6 +146,11 @@ else
       select_item "service offering" ".name, .displaytext" "${items}" $@
     ;;
   
+    snapshot|ss)
+      items=$( cs listSnapshots | jq -r '.snapshot[]' )
+      select_item "snapshot" ".name, .volumename, .snapshottype " "${items}" $@
+    ;;
+
     sshkeypair|ssh|keypair)
       items=$( cs listSSHKeyPairs | jq -r ".sshkeypair[] | .id=.name" )
       select_item "SSH keypair" ".name, .fingerprint" "${items}" $@
