@@ -170,7 +170,7 @@ else
   
     volume|vol)
       items=$( cs listVolumes | jq -r '.volume[] | .size=(.size/1024/1024/1024|tostring)+"GB"')
-      select_item "volume" ".name, .size, .zonename, .vmname, .vmstate" "${items}" $@
+      select_item "volume" ".name, .type, .size, .zonename, .vmname, .vmstate" "${items}" $@
     ;;
   
     zone)
